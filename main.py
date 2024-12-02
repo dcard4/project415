@@ -1,22 +1,62 @@
 import cv2
 import mediapipe as mp
+import numpy as np
+import os
 
 # Initialize MediaPipe Hands and drawing utilities
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
+
+def normalize_landmarks(landmarks, img_width, img_height):
+    # Convert landmarks to a numpy array and normalize relative to wrist (landmark 0)
+    landmarks = np.array([[lm.x * img_width, lm.y * img_height] for lm in landmarks])
+    wrist = landmarks[0]  # Assume wrist is the first point
+    normalized_landmarks = landmarks - wrist  # Normalize to wrist
+    max_value = np.max(np.linalg.norm(normalized_landmarks, axis=1))  # Scale normalization
+    return normalized_landmarks / max_value
+
+
+def extract_landmarks_from_images(folder_path):
+    landmarks_list = []  # Store landmarks for each image
+    image_names = []  # Store the corresponding image names
+    with mp_hands.Hands(static_image_mode=True, max_num_hands=1) as hands:
+        for image_name in os.listdir(folder_path):
+            image_path = os.path.join(folder_path, image_name)
+            image = cv2.imread(image_path)
+            if image is None:
+                continue
+
+            h, w, _ = image.shape
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = hands.process(rgb_image)
+
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    normalized = normalize_landmarks(hand_landmarks.landmark, w, h)
+                    landmarks_list.append(normalized)
+                    image_names.append(image_name)
+    return landmarks_list, image_names
+
+
+def calculate_similarity(landmarks1, landmarks2):
+    # Calculate Euclidean distance between two sets of landmarks
+    return np.linalg.norm(landmarks1 - landmarks2, axis=1).mean()
+
+
+# Preprocess reference images
+reference_folder = 'letters'
+reference_landmarks, reference_names = extract_landmarks_from_images(reference_folder)
+
 # Open the camera
 cap = cv2.VideoCapture(0)
 
-# Initialize hand detection
 with mp_hands.Hands(
-    max_num_hands=1,  # Detect one hand
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.7) as hands:
-
+        max_num_hands=1,
+        min_detection_confidence=0.7,
+        min_tracking_confidence=0.7) as hands:
     print("Press 'space' to take a picture and end the program.")
 
-    captured_frame = None  # Variable to store the captured frame
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -25,6 +65,7 @@ with mp_hands.Hands(
 
         # Flip the frame horizontally for a mirror-like view
         frame = cv2.flip(frame, 1)
+        h, w, _ = frame.shape
 
         # Convert the frame to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -35,18 +76,19 @@ with mp_hands.Hands(
         # Draw hand landmarks if a hand is detected
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(
-                    frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-                # Optional: Highlight a bounding box around the hand
-                h, w, c = frame.shape
-                hand_x = [landmark.x * w for landmark in hand_landmarks.landmark]
-                hand_y = [landmark.y * h for landmark in hand_landmarks.landmark]
-                x_min, x_max = int(min(hand_x)), int(max(hand_x))
-                y_min, y_max = int(min(hand_y)), int(max(hand_y))
+                # Normalize detected hand landmarks
+                normalized_detected = normalize_landmarks(hand_landmarks.landmark, w, h)
 
-                # Draw a rectangle around the hand
-                cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                # Compare with reference landmarks
+                similarities = [calculate_similarity(normalized_detected, ref) for ref in reference_landmarks]
+                best_match_index = np.argmin(similarities)
+                best_match_name = reference_names[best_match_index]
+
+                # Display the best match name on the frame
+                cv2.putText(frame, f"Best match: {best_match_name}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                            1, (255, 0, 0), 2, cv2.LINE_AA)
 
         # Display the result
         cv2.imshow('Hand Detection', frame)
@@ -54,16 +96,9 @@ with mp_hands.Hands(
         # Check for key presses
         key = cv2.waitKey(1) & 0xFF
         if key == 32:  # Spacebar pressed
-            captured_frame = frame  # Save the current frame
-            print("Picture captured. Exiting...")
+            print("Exiting...")
             break
 
-    # Release the camera
-    cap.release()
-    cv2.destroyAllWindows()
-
-    # Show the captured hand in a separate window if a frame was captured
-    if captured_frame is not None:
-        cv2.imshow('Captured Hand', captured_frame)
-        cv2.waitKey(0)  # Wait for any key press to close
-        cv2.destroyAllWindows()
+# Release the camera and close windows
+cap.release()
+cv2.destroyAllWindows()
