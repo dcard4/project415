@@ -67,6 +67,7 @@ def play_game(reference_landmarks, reference_names):
     #get a random letter to play the game with
     i = random.randint(0, 25)
     current_letter = reference_names[i]
+    current_letter = current_letter[:-4]
 
     score = 0
 
@@ -136,6 +137,7 @@ def play_game(reference_landmarks, reference_names):
                         score += 1
                         i = random.randint(0, 25)
                         current_letter = reference_names[i]
+                        current_letter = current_letter[:-4]
                         break
 
             cv2.imshow('Hand Detection', frame)
